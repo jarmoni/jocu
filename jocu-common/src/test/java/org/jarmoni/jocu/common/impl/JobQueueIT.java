@@ -6,7 +6,6 @@
 package org.jarmoni.jocu.common.impl;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 
 import java.util.List;
@@ -20,15 +19,20 @@ import org.jarmoni.jocu.common.api.IJobPersister;
 import org.jarmoni.jocu.common.api.IJobQueue;
 import org.jarmoni.jocu.common.api.IJobQueueService;
 import org.jarmoni.jocu.common.api.IJobReceiver;
+import org.jarmoni.jocu.common.api.JobQueueException;
 import org.jarmoni.jocu.common.api.JobState;
-import org.junit.After;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.ApplicationContext;
+import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.test.annotation.DirtiesContext;
+import org.springframework.test.annotation.DirtiesContext.ClassMode;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 
@@ -36,11 +40,18 @@ import com.google.common.collect.Lists;
 
 @RunWith(SpringJUnit4ClassRunner.class)
 @ContextConfiguration(classes = {JobQueueIT.QueueContext.class, JobQueueIT.PersisterContext.class})
-@DirtiesContext
-public class JobQueueIT {
+@DirtiesContext(classMode = ClassMode.AFTER_EACH_TEST_METHOD)
+public abstract class JobQueueIT {
+
+	//CHECKSTYLE:OFF
+	@Rule
+	public ExpectedException ee = ExpectedException.none();
+	//CHECKSTYLE:ON
+
+	private final Logger logger = LoggerFactory.getLogger(JobQueueIT.class);
 
 	@Autowired
-	private ApplicationContext ctx;
+	private ConfigurableApplicationContext ctx;
 
 	@Autowired
 	private IJobQueue jobQueue;
@@ -51,27 +62,25 @@ public class JobQueueIT {
 	@Autowired
 	private IJobReceiver finishedReceiver;
 	@Autowired
-	private IJobFinishedStrategy finishedStrategy;
+	private IJobFinishedStrategy jobFinishedStrategy;
 	@Autowired
 	private IJobGroup jobGroup;
 
-	@After
-	public void tearDown() throws Exception {
-		EasyMock.reset(this.jobReceiver);
-		EasyMock.reset(this.finishedStrategy);
-	}
+	abstract IJobPersister getJobPersister();
+
 
 	@Test
 	public void testRegular() throws Exception {
 
 		final String id = this.testRegularInternal();
 		final IJobEntity jobEntity = this.persister.getJobEntity(id);
-		assertEquals(JobState.FINISHED, jobEntity.getJobState());
+		assertEquals(JobState.COMPLETED, jobEntity.getJobState());
 	}
 
 	@Test
 	public void testRegularFinishedDeleted() throws Exception {
 
+		this.jobGroup.setDeleteFinishedJobs(true);
 		final String id = this.testRegularInternal();
 		assertNull(this.persister.getJobEntity(id));
 	}
@@ -82,26 +91,34 @@ public class JobQueueIT {
 
 		this.jobReceiver.receive(EasyMock.anyObject(IJob.class));
 		EasyMock.expectLastCall().times(1);
-		EasyMock.expect(this.finishedStrategy.finished(EasyMock.anyObject(IJob.class))).andReturn(false);
+		EasyMock.expect(this.jobFinishedStrategy.isFinished(EasyMock.anyObject(IJob.class))).andReturn(false);
 
 		this.jobReceiver.receive(EasyMock.anyObject(IJob.class));
 		EasyMock.expectLastCall().times(1);
-		EasyMock.expect(this.finishedStrategy.finished(EasyMock.anyObject(IJob.class))).andReturn(false);
+		EasyMock.expect(this.jobFinishedStrategy.isFinished(EasyMock.anyObject(IJob.class))).andReturn(false);
 
 		this.jobReceiver.receive(EasyMock.anyObject(IJob.class));
 		EasyMock.expectLastCall().times(1);
-		EasyMock.expect(this.finishedStrategy.finished(EasyMock.anyObject(IJob.class))).andReturn(true);
+		EasyMock.expect(this.jobFinishedStrategy.isFinished(EasyMock.anyObject(IJob.class))).andReturn(true);
 
 		this.finishedReceiver.receive(EasyMock.anyObject(IJob.class));
 		EasyMock.expectLastCall().times(1);
 
-		EasyMock.replay(this.jobReceiver, this.finishedReceiver, this.finishedStrategy);
+		EasyMock.replay(this.jobReceiver, this.finishedReceiver, this.jobFinishedStrategy);
 
 		final String id = this.jobQueue.push(testObject, "foobar");
 
-		Thread.sleep(10000);
-		EasyMock.verify(this.jobReceiver, this.finishedReceiver, this.finishedStrategy);
+		Thread.sleep(5000L);
+		EasyMock.verify(this.jobReceiver, this.finishedReceiver, this.jobFinishedStrategy);
 		return id;
+	}
+
+	@Test
+	public void testGroupNotExisting() throws Exception {
+
+		this.ee.expect(JobQueueException.class);
+		this.ee.expectMessage("Group does not exist. Group='foo'");
+		this.jobQueue.push(new Object(), "foo");
 	}
 
 	@Test
@@ -112,12 +129,12 @@ public class JobQueueIT {
 		this.jobReceiver.receive(EasyMock.anyObject(IJob.class));
 		EasyMock.expectLastCall().andThrow(new RuntimeException("abc"));
 
-		final String id = this.jobQueue.push(testObject, "myGroup");
+		final String id = this.jobQueue.push(testObject, "foobar");
 
-		EasyMock.replay(this.jobReceiver, this.finishedReceiver, this.timeoutReceiver, this.finishedStrategy);
+		this.replay();
 
 		Thread.sleep(2000L);
-		EasyMock.verify(this.jobReceiver, this.finishedReceiver, this.timeoutReceiver, this.finishedStrategy);
+		this.verify();
 		final IJobEntity jobEntity = this.persister.getJobEntity(id);
 		assertEquals(JobState.ERROR, jobEntity.getJobState());
 	}
@@ -125,44 +142,69 @@ public class JobQueueIT {
 	@Test
 	public void testTimeout() throws Exception {
 
-		final Object testObject = new Object();
+		this.runBlockingReceiver();
 
-		this.jobReceiver.receive(EasyMock.anyObject(IJob.class));
-		EasyMock.expectLastCall().anyTimes();
+		this.replay();
 
-		EasyMock.expect(this.finishedStrategy.finished(EasyMock.anyObject(IJob.class))).andReturn(false).anyTimes();
-
-		this.timeoutReceiver.receive(EasyMock.anyObject(IJob.class));
-		EasyMock.expectLastCall().times(1);
-
-		EasyMock.replay(this.jobReceiver, this.finishedReceiver, this.timeoutReceiver, this.finishedStrategy);
-
-		final String id = this.jobQueue.push(testObject, "myGroup", 200L);
+		final String id = this.jobQueue.push(new Object(), "foobar", 1L);
 
 		Thread.sleep(3000L);
-		EasyMock.verify(this.jobReceiver, this.finishedReceiver, this.timeoutReceiver, this.finishedStrategy);
-		assertNull(this.persister.getJobEntity(id));
+		this.verify();
+		assertEquals(JobState.EXCEEDED, this.persister.getJobEntity(id).getJobState());
+	}
+
+	@Test
+	public void testTimeoutViaGroup() throws Exception {
+
+		this.jobGroup.setTimeout(1L);
+
+		this.runBlockingReceiver();
+
+		this.replay();
+
+		final String id = this.jobQueue.push(new Object(), "foobar");
+
+		Thread.sleep(3000L);
+		this.verify();
+		assertEquals(JobState.EXCEEDED, this.persister.getJobEntity(id).getJobState());
 	}
 
 	@Test
 	public void testPausedNoTimeout() throws Exception {
 
-		final Object testObject = new Object();
+		this.runBlockingReceiver();
 
-		this.jobReceiver.receive(EasyMock.anyObject(IJob.class));
-		EasyMock.expectLastCall().anyTimes();
+		this.replay();
 
-		EasyMock.expect(this.finishedStrategy.finished(EasyMock.anyObject(IJob.class))).andReturn(false).anyTimes();
-
-		EasyMock.replay(this.jobReceiver, this.finishedStrategy);
-
-		final String id = this.jobQueue.push(testObject, "myGroup", 1000L);
+		final String id = this.jobQueue.push(new Object(), "foobar", 1000L);
+		Thread.sleep(2000L);
 		this.persister.pause(id);
 
 		Thread.sleep(3000L);
 
-		EasyMock.verify(this.jobReceiver, this.finishedStrategy);
-		assertNotNull(this.persister.getJobEntity(id));
+		this.verify();
+		assertEquals(JobState.PAUSED, this.persister.getJobEntity(id).getJobState());
+	}
+
+	private void runBlockingReceiver() throws Exception {
+
+		this.jobReceiver.receive(EasyMock.anyObject(IJob.class));
+		EasyMock.expectLastCall().andDelegateTo((IJobReceiver)job -> {
+			try {
+				Thread.sleep(100000L);
+			} catch (final InterruptedException e) {
+				logger.info("Thread interrupted due to end of test");
+			}
+
+		});;
+	}
+
+	private void replay() {
+		EasyMock.replay(this.jobReceiver, this.finishedReceiver, this.jobFinishedStrategy);
+	}
+
+	private void verify() {
+		EasyMock.verify(this.jobReceiver, this.finishedReceiver, this.jobFinishedStrategy);
 	}
 
 	@Configuration
@@ -174,7 +216,7 @@ public class JobQueueIT {
 
 		private final IJobReceiver timeoutReceiver = EasyMock.createMock(IJobReceiver.class);
 
-		private final IJobFinishedStrategy finishedStrategy = EasyMock.createMock(IJobFinishedStrategy.class);
+		private final IJobFinishedStrategy jobFinishedStrategy = EasyMock.createMock(IJobFinishedStrategy.class);
 
 		@Autowired
 		private AbstractPersisterContext persisterContext;
@@ -196,18 +238,13 @@ public class JobQueueIT {
 
 		@Bean
 		public IJobFinishedStrategy finishedStrategy() {
-			return this.finishedStrategy;
-		}
-
-		@Bean
-		public List<IJobFinishedStrategy> finishedStrategies() {
-			return Lists.newArrayList(this.finishedStrategy());
+			return this.jobFinishedStrategy;
 		}
 
 		@Bean
 		public IJobGroup jobGroup() {
 			final IJobGroup jobGroup = new JobGroup("foobar", this.jobReceiver, this.finishedReceiver);
-			((JobGroup) jobGroup).setJobFinishedStrategies(this.finishedStrategies());
+			((JobGroup) jobGroup).setJobFinishedStrategy(this.jobFinishedStrategy);
 			((JobGroup) jobGroup).setTimeout(5000L);
 			return jobGroup;
 		}
