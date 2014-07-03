@@ -101,13 +101,13 @@ public interface IJobPersister {
 	 */
 	IJobEntity getJobEntity(String jobId);
 
-	/**
-	 * Returns all jobs for given <code>jobState</code>. Method is 'read-only'. Means that implementation must not
-	 * manipulate the states of the returned jobs
-	 * @param jobState
-	 * @return
-	 */
-	Collection<IJobEntity> getJobs(JobState jobState);
+	//	/**
+	//	 * Returns all jobs for given <code>jobState</code>. Method is 'read-only'. Means that implementation must not
+	//	 * manipulate the states of the returned jobs
+	//	 * @param jobState
+	//	 * @return
+	//	 */
+	//	Collection<IJobEntity> getJobs(JobState... jobState);
 
 	/**
 	 * Returns all Jobs with jobState=<code>WAITING</code>.<br>

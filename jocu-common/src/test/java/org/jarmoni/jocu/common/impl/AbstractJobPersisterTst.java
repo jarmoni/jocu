@@ -9,7 +9,6 @@ import static org.junit.Assert.assertTrue;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
-import java.util.stream.Collectors;
 
 import org.jarmoni.jocu.common.api.IJobEntity;
 import org.jarmoni.jocu.common.api.IJobPersister;
@@ -121,25 +120,6 @@ public abstract class AbstractJobPersisterTst {
 	}
 
 	@Test
-	public void testGetJobs() throws Exception {
-
-		final String id1 = this.jobPersister.insert(new Object(), "foobar", 1000L);
-		final String id2 = this.jobPersister.insert(new Object(), "foobar", 1000L);
-		final String id3 = this.jobPersister.insert(new Object(), "foobar", 1000L);
-
-		this.jobPersister.setExceeded(id3);
-
-		final Collection<IJobEntity> waitingJobs = this.jobPersister.getJobs(JobState.WAITING);
-		assertEquals(2, waitingJobs.size());
-		assertTrue(waitingJobs.stream().map(IJobEntity::getId).collect(Collectors.toList()).contains(id1));
-		assertTrue(waitingJobs.stream().map(IJobEntity::getId).collect(Collectors.toList()).contains(id2));
-
-		final Collection<IJobEntity> exceededJobs = this.jobPersister.getJobs(JobState.EXCEEDED);
-		assertEquals(1, exceededJobs.size());
-		assertEquals(id3, exceededJobs.iterator().next().getId());
-	}
-
-	@Test
 	public void testGetWaitingJobsForProcessing() throws Exception {
 
 		this.jobPersister.insert(new Object(), "foobar", 1000L);
@@ -159,10 +139,21 @@ public abstract class AbstractJobPersisterTst {
 	}
 
 	@Test
-	public void testGetExceededJobs() throws Exception {
+	public void testGetExceededJobsProcessing() throws Exception {
 
 		this.jobPersister.insert(new Object(), "foobar", 0L);
 		this.jobPersister.getWaitingJobsForProcessing();
+		Thread.sleep(1L);
+		final Collection<IJobEntity> jobs = this.jobPersister.getExceededJobs();
+		assertEquals(1, jobs.size());
+	}
+
+	@Test
+	public void testGetExceededJobsCompleting() throws Exception {
+
+		final String id = this.jobPersister.insert(new Object(), "foobar", 0L);
+		this.jobPersister.setFinished(id);
+		this.jobPersister.getFinishedJobsForCompleting();
 		Thread.sleep(1L);
 		final Collection<IJobEntity> jobs = this.jobPersister.getExceededJobs();
 		assertEquals(1, jobs.size());

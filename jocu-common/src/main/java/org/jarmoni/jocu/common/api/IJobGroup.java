@@ -1,15 +1,13 @@
 package org.jarmoni.jocu.common.api;
 
-import java.util.Optional;
-import java.util.function.Predicate;
 
 public interface IJobGroup {
 
 	String getName();
 
-	Optional<Predicate<IJob>> getJobFinishedStrategy();
+	IJobFinishedStrategy getJobFinishedStrategy();
 
-	void setJobFinishedStrategy(Predicate<IJob> jobFinishedStrategy);
+	void setJobFinishedStrategy(IJobFinishedStrategy jobFinishedStrategy);
 
 	IJobReceiver getJobReceiver();
 

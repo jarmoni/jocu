@@ -3,14 +3,16 @@ package org.jarmoni.jocu.common.impl;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Scanner;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
-import java.util.function.Predicate;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.jarmoni.jocu.common.api.IJob;
 import org.jarmoni.jocu.common.api.IJobEntity;
+import org.jarmoni.jocu.common.api.IJobFinishedStrategy;
 import org.jarmoni.jocu.common.api.IJobGroup;
 import org.jarmoni.jocu.common.api.IJobPersister;
 import org.jarmoni.jocu.common.api.IJobQueueService;
@@ -23,7 +25,6 @@ import org.slf4j.LoggerFactory;
 
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 
-//CHECKSTYLE:OFF
 public class JobQueueService implements IJobQueueService {
 
 	private static final long SLEEP_INTERVAL = 1000L;
@@ -36,10 +37,7 @@ public class JobQueueService implements IJobQueueService {
 
 	private int numReceiverThreads = 1;
 
-	private ExecutorService jobExecutorPool;
-	private ExecutorService jobScannerPool;
-
-	public static final String foo = "";
+	private ExecutorService waitingJobScannerPool, finishedJobScannerPool, exceededJobScannerPool, jobExecutorPool;
 
 	private final Logger logger = LoggerFactory.getLogger(JobQueueService.class);
 
@@ -55,9 +53,10 @@ public class JobQueueService implements IJobQueueService {
 	private void init() {
 
 		this.jobExecutorPool = Executors.newFixedThreadPool(this.numReceiverThreads,
-				new ThreadFactoryBuilder().setNameFormat("new-job-executor-%d").build());
-		this.jobScannerPool = Executors.newSingleThreadExecutor(new ThreadFactoryBuilder().setNameFormat("job-scanner-%d")
-				.build());
+				new ThreadFactoryBuilder().setNameFormat("job-executor-%d").build());
+		this.waitingJobScannerPool = Executors.newSingleThreadExecutor(new ThreadFactoryBuilder().setNameFormat("waiting-job-scanner-%d").build());
+		this.finishedJobScannerPool = Executors.newSingleThreadExecutor(new ThreadFactoryBuilder().setNameFormat("finished-job-scanner-%d").build());
+		this.exceededJobScannerPool = Executors.newSingleThreadExecutor(new ThreadFactoryBuilder().setNameFormat("exceeded-job-scanner-%d").build());
 	}
 
 	/**
@@ -74,10 +73,9 @@ public class JobQueueService implements IJobQueueService {
 			throw new RuntimeException("Could not refresh jobs", e);
 		}
 
-		this.jobScannerPool.execute(new JobScanner(this.persister,
-				jobEntity -> processJob(jobEntity),
-				jobEntity -> processFinishedJob(jobEntity),
-				jobEntity -> processExceededJob(jobEntity)));
+		this.waitingJobScannerPool.execute(new JobScanner(this.persister, persister -> persister.getWaitingJobsForProcessing(), jobEntity -> this.processWaitingJob(jobEntity)));
+		this.finishedJobScannerPool.execute(new JobScanner(this.persister, persister -> persister.getFinishedJobsForCompleting(), jobEntity -> this.processFinishedJob(jobEntity)));
+		this.exceededJobScannerPool.execute(new JobScanner(this.persister, persister -> persister.getExceededJobs(), jobEntity -> this.processExceededJob(jobEntity)));
 	}
 
 	/**
@@ -86,8 +84,10 @@ public class JobQueueService implements IJobQueueService {
 	public void stop() {
 
 		this.logger.info("JobQueueService#stop()");
-		this.jobScannerPool.shutdownNow();
 		this.jobExecutorPool.shutdownNow();
+		this.waitingJobScannerPool.shutdownNow();
+		this.finishedJobScannerPool.shutdownNow();
+		this.exceededJobScannerPool.shutdownNow();
 	}
 
 	@Override
@@ -151,7 +151,7 @@ public class JobQueueService implements IJobQueueService {
 		}
 	}
 
-	private void processJob(final IJobEntity jobEntity) {
+	private void processWaitingJob(final IJobEntity jobEntity) {
 
 		final IJob job = new Job(jobEntity.getId(), jobEntity.getJobGroup(), jobEntity.getJobObject(), this.queueServiceAccess);
 		final IJobGroup jobGroup = this.getJobGroupInternal(job.getJobId());
@@ -167,15 +167,15 @@ public class JobQueueService implements IJobQueueService {
 
 		final IJob job = new Job(jobEntity.getId(), jobEntity.getJobGroup(), jobEntity.getJobObject(), this.queueServiceAccess);
 		final IJobGroup jobGroup = this.getJobGroupInternal(job.getJobId());
-		this.jobExecutorPool.execute(() -> this.executeFinishedJob(job, jobGroup.getJobReceiver(), jobGroup.isDeleteFinishedJobs()));
+		this.jobExecutorPool.execute(() -> this.executeFinishedJob(job, jobGroup.getFinishedReceiver(), jobGroup.isDeleteFinishedJobs()));
 	}
 
-	private void executeJob(final IJob job, final IJobReceiver jobReceiver, final Optional<Predicate<IJob>> finishedStrategy) {
+	private void executeJob(final IJob job, final IJobReceiver jobReceiver, final IJobFinishedStrategy finishedStrategy) {
 		logger.info("Executing receiver='jobReceiver'");
 		try {
 			try {
 				jobReceiver.receive(job);
-				if(finishedStrategy.isPresent() && finishedStrategy.get().test(job)) {
+				if(finishedStrategy != null && finishedStrategy.isFinished(job)) {
 					persister.setFinished(job.getJobId());
 					return;
 				}
@@ -245,69 +245,36 @@ public class JobQueueService implements IJobQueueService {
 		return this.queueServiceAccess;
 	}
 
-	public static class JobScanner extends Thread {
+	public static class JobScanner implements Runnable {
 
 		private final IJobPersister jobPersister;
+		private final Function<IJobPersister, Collection<IJobEntity>> jobAccessFunction;
 		private final Consumer<IJobEntity> jobConsumer;
-		private final Consumer<IJobEntity> finishedConsumer;
-		private final Consumer<IJobEntity> timeoutConsumer;
 
-		private final Logger logger = LoggerFactory.getLogger(JobScanner.class);
+		private final Logger logger = LoggerFactory.getLogger(Scanner.class);
 
-		public JobScanner(final IJobPersister jobPersister, final Consumer<IJobEntity> jobConsumer,
-				final Consumer<IJobEntity> finishedConsumer, final Consumer<IJobEntity> timeoutConsumer) {
-
+		public JobScanner(final IJobPersister jobPersister, final Function<IJobPersister, Collection<IJobEntity>> jobAccessFunction, final Consumer<IJobEntity> jobConsumer) {
 			this.jobPersister = Asserts.notNullSimple(jobPersister, "jobPersister");
-			this.jobConsumer = Asserts.notNullSimple(jobConsumer, "jobSubmitter");
-			this.finishedConsumer = Asserts.notNull(finishedConsumer, "finishedConsumer");
-			this.timeoutConsumer = Asserts.notNullSimple(timeoutConsumer, "timeoutConsumer");
+			this.jobAccessFunction = Asserts.notNullSimple(jobAccessFunction, "jobAccessFunction");
+			this.jobConsumer = Asserts.notNullSimple(jobConsumer, "jobConsumer");
 		}
 
 		@Override
 		public void run() {
-
-			while (true) {
-				boolean noJobs = true;
+			while(true) {
 				try {
-					final Collection<IJobEntity> newJobs = jobPersister.getWaitingJobsForProcessing();
-					for (final IJobEntity jobEntity : newJobs) {
-						this.jobConsumer.accept(jobEntity);
-						noJobs = false;
+					final Collection<IJobEntity> jobEntities = jobAccessFunction.apply(this.jobPersister);
+					if(!jobEntities.isEmpty()) {
+						jobEntities.forEach(jobEntity -> jobConsumer.accept(jobEntity));
 					}
-				}
-				catch (final Exception ex) {
-					logger.warn("Getting jobs threw exception", ex);
-				}
-				try {
-					final Collection<IJobEntity> newJobs = jobPersister.getFinishedJobsForCompleting();
-					for (final IJobEntity jobEntity : newJobs) {
-						this.finishedConsumer.accept(jobEntity);
-						noJobs = false;
-					}
-				}
-				catch (final Exception ex) {
-					logger.warn("Getting jobs threw exception", ex);
-				}
-				try {
-					final Collection<IJobEntity> exceededJobs = jobPersister.getExceededJobs();
-					for (final IJobEntity jobEntity : exceededJobs) {
-						this.timeoutConsumer.accept(jobEntity);
-						noJobs = false;
-					}
-				}
-				catch (final Exception ex) {
-					logger.warn("Getting exceeded jobs threw exception", ex);
-				}
-				if (noJobs) {
-					try {
+					else {
 						Thread.sleep(SLEEP_INTERVAL);
 					}
-					catch (final InterruptedException iex) {
-						logger.info("Received interrupt");
-					}
+				}
+				catch (final Exception ex) {
+					logger.warn("Getting jobs threw exception", ex);
 				}
 			}
 		}
 	}
 }
-//CHECKSTYLE:ON

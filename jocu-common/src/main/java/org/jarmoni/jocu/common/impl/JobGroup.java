@@ -1,9 +1,6 @@
 package org.jarmoni.jocu.common.impl;
 
-import java.util.Optional;
-import java.util.function.Predicate;
-
-import org.jarmoni.jocu.common.api.IJob;
+import org.jarmoni.jocu.common.api.IJobFinishedStrategy;
 import org.jarmoni.jocu.common.api.IJobGroup;
 import org.jarmoni.jocu.common.api.IJobReceiver;
 import org.jarmoni.util.lang.Asserts;
@@ -18,7 +15,7 @@ public class JobGroup implements IJobGroup {
 
 	private final IJobReceiver finishedReceiver;
 
-	private Optional<Predicate<IJob>> jobFinishedStrategy;
+	private IJobFinishedStrategy jobFinishedStrategy;
 
 	private long timeout = 30000L;
 
@@ -36,13 +33,13 @@ public class JobGroup implements IJobGroup {
 	}
 
 	@Override
-	public Optional<Predicate<IJob>> getJobFinishedStrategy() {
+	public IJobFinishedStrategy getJobFinishedStrategy() {
 		return this.jobFinishedStrategy;
 	}
 
 	@Override
-	public void setJobFinishedStrategy(final Predicate<IJob> jobFinishedStrategy) {
-		this.jobFinishedStrategy = Optional.of(jobFinishedStrategy);
+	public void setJobFinishedStrategy(final IJobFinishedStrategy jobFinishedStrategy) {
+		this.jobFinishedStrategy = jobFinishedStrategy;
 	}
 
 	@Override

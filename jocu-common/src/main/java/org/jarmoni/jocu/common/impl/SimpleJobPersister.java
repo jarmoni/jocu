@@ -1,5 +1,6 @@
 package org.jarmoni.jocu.common.impl;
 
+import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Collection;
 import java.util.Map;
@@ -10,6 +11,8 @@ import java.util.stream.Collectors;
 import org.jarmoni.jocu.common.api.IJobEntity;
 import org.jarmoni.jocu.common.api.IJobPersister;
 import org.jarmoni.jocu.common.api.JobState;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Simple implementation of {@link IJobPersister} which holds all
@@ -18,6 +21,8 @@ import org.jarmoni.jocu.common.api.JobState;
  * creating a more sophisticated implementation.
  */
 public class SimpleJobPersister implements IJobPersister {
+
+	private final Logger logger = LoggerFactory.getLogger(SimpleJobPersister.class);
 
 	private final Map<String, IJobEntity> jobs = new ConcurrentHashMap<>();
 
@@ -108,28 +113,29 @@ public class SimpleJobPersister implements IJobPersister {
 	@Override
 	public Collection<IJobEntity> getExceededJobs() {
 
-		return this.getJobs(JobState.PROCESSING).stream()
+		return this.getJobs(JobState.PROCESSING, JobState.COMPLETING).stream()
 				.filter(jobEntity -> jobEntity.getLastUpdate().getTime() + jobEntity.getCurrentTimeout() < Calendar.getInstance().getTimeInMillis())
 				.collect(Collectors.toList());
 	}
 
-	@Override
-	public Collection<IJobEntity> getJobs(final JobState jobState) {
-
-		return this.jobs.entrySet().stream()
-				.map(e -> e.getValue())
-				.peek(job -> System.out.println(job))
-				.filter(job -> job.getJobState().equals(jobState))
-				.collect(Collectors.toList());
-	}
 
 	@Override
 	public void refresh() {
 
-		this.getJobs(JobState.PROCESSING).forEach(job -> {
-			job.setJobState(JobState.WAITING);
+		this.getJobs(JobState.PROCESSING, JobState.COMPLETING).forEach(job -> {
+			final JobState newState = JobState.PROCESSING.equals(job.getJobState()) ? JobState.WAITING : JobState.FINISHED;
+			job.setJobState(newState);
 			job.setLastUpdate(Calendar.getInstance().getTime());
 		});
+	}
+
+	private Collection<IJobEntity> getJobs(final JobState... jobState) {
+
+		return this.jobs.entrySet().stream()
+				.map(e -> e.getValue())
+				.filter(job -> Arrays.asList(jobState).contains(job.getJobState()))
+				.peek(job -> logger.info(job.toString()))
+				.collect(Collectors.toList());
 	}
 
 	private Collection<IJobEntity> getJobsForStateInternal(final JobState oldState, final JobState newState) {
