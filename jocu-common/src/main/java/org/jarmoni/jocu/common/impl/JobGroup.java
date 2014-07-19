@@ -75,7 +75,8 @@ public class JobGroup implements IJobGroup {
 	@Override
 	public String toString() {
 
-		return Objects.toStringHelper(this.getClass()).add("name", this.name).add("jobReceiver", this.jobReceiver).add("finishedReceiver", this.finishedReceiver)
-				.add("jobFinishedStrategy", this.jobFinishedStrategy).add("timeout", this.timeout).add("deleteFinishedJobs", this.deleteFinishedJobs).toString();
+		return Objects.toStringHelper(this.getClass()).add("name", this.name).add("jobReceiver", this.jobReceiver)
+				.add("finishedReceiver", this.finishedReceiver).add("jobFinishedStrategy", this.jobFinishedStrategy)
+				.add("timeout", this.timeout).add("deleteFinishedJobs", this.deleteFinishedJobs).toString();
 	}
 }

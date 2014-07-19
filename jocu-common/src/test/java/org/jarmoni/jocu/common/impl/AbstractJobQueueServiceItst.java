@@ -39,16 +39,17 @@ import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 import com.google.common.collect.Lists;
 
 @RunWith(SpringJUnit4ClassRunner.class)
-@ContextConfiguration(classes = {JobQueueIT.QueueContext.class, JobQueueIT.PersisterContext.class})
+@ContextConfiguration(classes = { AbstractJobQueueServiceItst.QueueContext.class,
+		AbstractJobQueueServiceItst.PersisterContext.class })
 @DirtiesContext(classMode = ClassMode.AFTER_EACH_TEST_METHOD)
-public abstract class JobQueueIT {
+public abstract class AbstractJobQueueServiceItst {
 
-	//CHECKSTYLE:OFF
+	// CHECKSTYLE:OFF
 	@Rule
 	public ExpectedException ee = ExpectedException.none();
-	//CHECKSTYLE:ON
+	// CHECKSTYLE:ON
 
-	private final Logger logger = LoggerFactory.getLogger(JobQueueIT.class);
+	private final Logger logger = LoggerFactory.getLogger(AbstractJobQueueServiceItst.class);
 
 	@Autowired
 	private ConfigurableApplicationContext ctx;
@@ -67,7 +68,6 @@ public abstract class JobQueueIT {
 	private IJobGroup jobGroup;
 
 	abstract IJobPersister getJobPersister();
-
 
 	@Test
 	public void testRegular() throws Exception {

@@ -44,8 +44,6 @@ public class JobQueueServiceTest {
 	private IJobReceiver jobReceiver;
 	@Mocked
 	private IJobReceiver finishedReceiver;
-	@Mocked
-	private IJobReceiver timeoutReceiver;
 
 	private IJobGroup group;
 	private IJob job;

@@ -54,9 +54,12 @@ public class JobQueueService implements IJobQueueService {
 
 		this.jobExecutorPool = Executors.newFixedThreadPool(this.numReceiverThreads,
 				new ThreadFactoryBuilder().setNameFormat("job-executor-%d").build());
-		this.waitingJobScannerPool = Executors.newSingleThreadExecutor(new ThreadFactoryBuilder().setNameFormat("waiting-job-scanner-%d").build());
-		this.finishedJobScannerPool = Executors.newSingleThreadExecutor(new ThreadFactoryBuilder().setNameFormat("finished-job-scanner-%d").build());
-		this.exceededJobScannerPool = Executors.newSingleThreadExecutor(new ThreadFactoryBuilder().setNameFormat("exceeded-job-scanner-%d").build());
+		this.waitingJobScannerPool = Executors.newSingleThreadExecutor(new ThreadFactoryBuilder().setNameFormat(
+				"waiting-job-scanner-%d").build());
+		this.finishedJobScannerPool = Executors.newSingleThreadExecutor(new ThreadFactoryBuilder().setNameFormat(
+				"finished-job-scanner-%d").build());
+		this.exceededJobScannerPool = Executors.newSingleThreadExecutor(new ThreadFactoryBuilder().setNameFormat(
+				"exceeded-job-scanner-%d").build());
 	}
 
 	/**
@@ -75,7 +78,17 @@ public class JobQueueService implements IJobQueueService {
 
 		this.waitingJobScannerPool.execute(new JobScanner(this.persister, persister -> persister.getWaitingJobsForProcessing(), jobEntity -> this.processWaitingJob(jobEntity)));
 		this.finishedJobScannerPool.execute(new JobScanner(this.persister, persister -> persister.getFinishedJobsForCompleting(), jobEntity -> this.processFinishedJob(jobEntity)));
-		this.exceededJobScannerPool.execute(new JobScanner(this.persister, persister -> persister.getExceededJobs(), jobEntity -> this.processExceededJob(jobEntity)));
+		this.exceededJobScannerPool.execute(() -> {
+			while(true) {
+				try {
+					this.persister.exceedJobs();
+					Thread.sleep(SLEEP_INTERVAL);
+				}
+				catch(final Exception ex) {
+					logger.warn("Exceeding jobs threw exception", ex);
+				}
+			}
+		});
 	}
 
 	/**
@@ -158,11 +171,6 @@ public class JobQueueService implements IJobQueueService {
 		this.jobExecutorPool.execute(() -> this.executeJob(job, jobGroup.getJobReceiver(), jobGroup.getJobFinishedStrategy()));
 	}
 
-	private void processExceededJob(final IJobEntity jobEntity) {
-
-		this.persister.setExceeded(jobEntity.getId());
-	}
-
 	private void processFinishedJob(final IJobEntity jobEntity) {
 
 		final IJob job = new Job(jobEntity.getId(), jobEntity.getJobGroup(), jobEntity.getJobObject(), this.queueServiceAccess);
@@ -175,7 +183,7 @@ public class JobQueueService implements IJobQueueService {
 		try {
 			try {
 				jobReceiver.receive(job);
-				if(finishedStrategy != null && finishedStrategy.isFinished(job)) {
+				if (finishedStrategy != null && finishedStrategy.isFinished(job)) {
 					persister.setFinished(job.getJobId());
 					return;
 				}
@@ -202,7 +210,7 @@ public class JobQueueService implements IJobQueueService {
 		try {
 			try {
 				finishedReceiver.receive(job);
-				if(deleteFinishedJob) {
+				if (deleteFinishedJob) {
 					persister.delete(job.getJobId());
 				}
 				else {
@@ -253,7 +261,8 @@ public class JobQueueService implements IJobQueueService {
 
 		private final Logger logger = LoggerFactory.getLogger(Scanner.class);
 
-		public JobScanner(final IJobPersister jobPersister, final Function<IJobPersister, Collection<IJobEntity>> jobAccessFunction, final Consumer<IJobEntity> jobConsumer) {
+		public JobScanner(final IJobPersister jobPersister,
+				final Function<IJobPersister, Collection<IJobEntity>> jobAccessFunction, final Consumer<IJobEntity> jobConsumer) {
 			this.jobPersister = Asserts.notNullSimple(jobPersister, "jobPersister");
 			this.jobAccessFunction = Asserts.notNullSimple(jobAccessFunction, "jobAccessFunction");
 			this.jobConsumer = Asserts.notNullSimple(jobConsumer, "jobConsumer");

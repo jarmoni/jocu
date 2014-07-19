@@ -1,6 +1,5 @@
 package org.jarmoni.jocu.common.api;
 
-
 public interface IJobGroup {
 
 	String getName();

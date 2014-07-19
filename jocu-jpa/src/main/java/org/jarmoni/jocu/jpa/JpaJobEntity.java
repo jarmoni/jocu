@@ -32,26 +32,32 @@ import com.google.common.base.Objects;
 
 @Entity
 @Table(name = "JOB_ENTITY")
-//@formatter:off
-@NamedQueries({ 
-	@NamedQuery(name = JpaJobEntity.QUERY_DELETE_BY_ID, query = "delete from JpaJobEntity x where x.id like :id"),
-	@NamedQuery(name = JpaJobEntity.QUERY_PAUSE, query = "update JpaJobEntity x set x.jobState = 'PAUSED', x.currentTimeout = null where x.id like :id"),
-	@NamedQuery(name = JpaJobEntity.QUERY_RESUME, query = "update JpaJobEntity x set x.jobState = 'NEW', x.lastUpdate = :lastUpdate, x.currentTimeout = x.timeout where x.id like :id"),
-	@NamedQuery(name = JpaJobEntity.QUERY_UPDATE, query = "update JpaJobEntity x set x.jobState = 'NEW', x.lastUpdate = :lastUpdate, x.currentTimeout = x.timeout, x.jobBytes = :jobBytes where x.id like :id"),
-	@NamedQuery(name = JpaJobEntity.QUERY_FINISH, query = "update JpaJobEntity x set x.jobState = 'FINISHED' where x.id like :id"),
-	@NamedQuery(name = JpaJobEntity.QUERY_ERROR, query = "update JpaJobEntity x set x.jobState = 'ERROR' where x.id like :id"),
-	@NamedQuery(name = JpaJobEntity.QUERY_SELECT_FOR_STATE, query = "select x from JpaJobEntity x where x.jobState like :jobState order by x.lastUpdate asc"),
-	@NamedQuery(name = JpaJobEntity.QUERY_SELECT_ALL, query = "select x from JpaJobEntity x")
-})
-//@formatter:on
+// @formatter:off
+@NamedQueries({
+		@NamedQuery(name = JpaJobEntity.QUERY_DELETE_BY_ID, query = "delete from JpaJobEntity x where x.id like :id"),
+		@NamedQuery(name = JpaJobEntity.QUERY_PAUSE, query = "update JpaJobEntity x set x.jobState = 'PAUSED', x.currentTimeout = null where x.id like :id"),
+		@NamedQuery(name = JpaJobEntity.QUERY_RESUME, query = "update JpaJobEntity x set x.jobState = 'WAITING', x.lastUpdate = :lastUpdate, x.currentTimeout = x.timeout where x.id like :id"),
+		@NamedQuery(name = JpaJobEntity.QUERY_UPDATE, query = "update JpaJobEntity x set x.jobState = 'WAITING', x.lastUpdate = :lastUpdate, x.currentTimeout = x.timeout, x.jobBytes = :jobBytes where x.id like :id"),
+		// @NamedQuery(name = JpaJobEntity.QUERY_FINISH, query =
+		// "update JpaJobEntity x set x.jobState = 'FINISHED' where x.id like :id"),
+		// @NamedQuery(name = JpaJobEntity.QUERY_COMPLETED, query =
+		// "update JpaJobEntity x set x.jobState = 'COMPLETED' where x.id like :id"),
+		// @NamedQuery(name = JpaJobEntity.QUERY_ERROR, query =
+		// "update JpaJobEntity x set x.jobState = 'ERROR' where x.id like :id"),
+		@NamedQuery(name = JpaJobEntity.QUERY_UPDATE_STATE, query = "update JpaJobEntity x set x.jobState = :state where x.id like :id"),
+		@NamedQuery(name = JpaJobEntity.QUERY_SELECT_FOR_STATE, query = "select x from JpaJobEntity x where x.jobState in :jobStates order by x.lastUpdate asc"),
+		@NamedQuery(name = JpaJobEntity.QUERY_SELECT_ALL, query = "select x from JpaJobEntity x") })
+// @formatter:on
 public class JpaJobEntity implements IJobEntity {
 
 	public static final String QUERY_DELETE_BY_ID = "JpaJobEntity.deleteById";
 	public static final String QUERY_PAUSE = "JpaJobEntity.pause";
 	public static final String QUERY_RESUME = "JpaJobEntity.resume";
 	public static final String QUERY_UPDATE = "JpaJobEntity.update";
-	public static final String QUERY_FINISH = "JpaJobEntity.finish";
-	public static final String QUERY_ERROR = "JpaJobEntity.error";
+	// public static final String QUERY_FINISH = "JpaJobEntity.finish";
+	// public static final String QUERY_COMPLETED = "JpaJobEntity.completed";
+	// public static final String QUERY_ERROR = "JpaJobEntity.error";
+	public static final String QUERY_UPDATE_STATE = "JpaJobEntity.updateState";
 	public static final String QUERY_SELECT_FOR_STATE = "JpaJobEntity.selectForState";
 	public static final String QUERY_SELECT_ALL = "JpaJobEntity.selectAll";
 
@@ -171,22 +177,21 @@ public class JpaJobEntity implements IJobEntity {
 
 	public static byte[] jobObjectToJobBytes(final Object jobObject) {
 		final ByteArrayOutputStream bos = new ByteArrayOutputStream();
-		try {
-			final ObjectOutputStream oos = new ObjectOutputStream(bos);
+		try (final ObjectOutputStream oos = new ObjectOutputStream(bos)) {
 			oos.writeObject(jobObject);
 			return bos.toByteArray();
-		} catch (final IOException e) {
+		}
+		catch (final IOException e) {
 			throw new RuntimeException("Could not create blob", e);
 		}
 	}
 
 	public static Object jobBytesToJobObject(final byte[] jobBytes) {
 		final ByteArrayInputStream bis = new ByteArrayInputStream(jobBytes);
-		ObjectInputStream ois;
-		try {
-			ois = new ObjectInputStream(bis);
+		try (final ObjectInputStream ois = new ObjectInputStream(bis)) {
 			return ois.readObject();
-		} catch (final Exception e) {
+		}
+		catch (final Exception e) {
 			throw new RuntimeException("Could not read blob", e);
 		}
 	}
@@ -194,9 +199,9 @@ public class JpaJobEntity implements IJobEntity {
 	@Override
 	public String toString() {
 
-		return Objects.toStringHelper(this.getClass()).add("id", this.id).add("version", this.version).add("lastUpdate", this.lastUpdate)
-				.add("timeout", this.timeout).add("currentTimeout", this.currentTimeout).add("jobState", this.jobState)
-				.add("jobBytes", this.jobBytes).add("jobGroup", this.jobGroup).toString();
+		return Objects.toStringHelper(this.getClass()).add("id", this.id).add("version", this.version)
+				.add("lastUpdate", this.lastUpdate).add("timeout", this.timeout).add("currentTimeout", this.currentTimeout)
+				.add("jobState", this.jobState).add("jobBytes", this.jobBytes).add("jobGroup", this.jobGroup).toString();
 	}
 
 	public static JobEntityBuilder builder() {

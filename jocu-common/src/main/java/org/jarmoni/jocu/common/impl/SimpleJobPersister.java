@@ -32,7 +32,7 @@ public class SimpleJobPersister implements IJobPersister {
 		final String id = UUID.randomUUID().toString();
 		this.jobs.put(id,
 				JobEntity.builder().id(id).jobObject(jobObject).jobGroup(group).lastUpdate(Calendar.getInstance().getTime())
-				.timeout(timeout).currentTimeout(timeout).jobState(JobState.WAITING).build());
+						.timeout(timeout).currentTimeout(timeout).jobState(JobState.WAITING).build());
 		return id;
 	}
 
@@ -87,9 +87,11 @@ public class SimpleJobPersister implements IJobPersister {
 	}
 
 	@Override
-	public void setExceeded(final String jobId) {
+	public void exceedJobs() {
 
-		this.setJobStateInternal(jobId, JobState.EXCEEDED);
+		this.getJobs(JobState.PROCESSING, JobState.COMPLETING).stream()
+		.filter(jobEntity -> jobEntity.getLastUpdate().getTime() + jobEntity.getCurrentTimeout() < Calendar.getInstance().getTimeInMillis())
+		.forEach(entity -> entity.setJobState(JobState.EXCEEDED));
 	}
 
 	@Override
@@ -109,15 +111,6 @@ public class SimpleJobPersister implements IJobPersister {
 
 		return this.getJobsForStateInternal(JobState.FINISHED, JobState.COMPLETING);
 	}
-
-	@Override
-	public Collection<IJobEntity> getExceededJobs() {
-
-		return this.getJobs(JobState.PROCESSING, JobState.COMPLETING).stream()
-				.filter(jobEntity -> jobEntity.getLastUpdate().getTime() + jobEntity.getCurrentTimeout() < Calendar.getInstance().getTimeInMillis())
-				.collect(Collectors.toList());
-	}
-
 
 	@Override
 	public void refresh() {
@@ -150,7 +143,7 @@ public class SimpleJobPersister implements IJobPersister {
 	private void setJobStateInternal(final String jobId, final JobState state) {
 
 		final IJobEntity entity = this.getJobEntityInternal(jobId);
-		if(entity != null) {
+		if (entity != null) {
 			entity.setJobState(state);
 		}
 	}
